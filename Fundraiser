@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Fundraiser {
+    address[] public owners;  // Multisig: List of owners
+    uint256 public goal;
+    uint256 public raisedAmount;
+    uint256 public deadline;
+    bool public goalReached;
+
+    mapping(address => uint256) public contributions;
+    mapping(address => bool) public refunded;
+
+    event FundDonated(address indexed donor, uint256 amount);
+    event FundsWithdrawn(address indexed owner, uint256 amount);
+    event GoalReached(uint256 totalAmountRaised);
+    event Refunded(address indexed donor, uint256 amount);
+
+    modifier onlyOwners() {
+        bool isOwner = false;
+        for (uint i = 0; i < owners.length; i++) {
+            if (msg.sender == owners[i]) {
+                isOwner = true;
+                break;
+            }
+        }
+        require(isOwner, "Not an owner");
+        _;
+    }
+
+    constructor(uint256 _goal, uint256 _duration, address[] memory _owners) {
+        require(_owners.length > 0, "At least one owner is required");
+        owners = _owners;
+        goal = _goal;
+        raisedAmount = 0;
+        goalReached = false;
+        deadline = block.timestamp + _duration;  // Fundraiser duration in seconds
+    }
+
+    // Donate to the fundraiser
+    function donate() public payable {
+        require(msg.value > 0, "Donation must be greater than zero.");
+        contributions[msg.sender] += msg.value;
+        raisedAmount += msg.value;
+
+        emit FundDonated(msg.sender, msg.value);
+
+        // Check if goal has been reached
+        if (raisedAmount >= goal && !goalReached) {
+            goalReached = true;
+            emit GoalReached(raisedAmount);
+        }
+    }
+
+    // Allow the owner to withdraw funds once the goal is reached (multisig)
+    function withdraw(uint256 amount) public onlyOwners {
+        require(goalReached, "Goal has not been reached.");
+        require(address(this).balance >= amount, "Insufficient balance.");
+        uint256 numApprovals = 0;
+
+        // Check if more than half of the owners approve this withdrawal
+        for (uint i = 0; i < owners.length; i++) {
+            if (msg.sender == owners[i]) {
+                numApprovals++;
+            }
+        }
+
+        require(numApprovals > owners.length / 2, "Not enough approvals from owners.");
+
+        payable(msg.sender).transfer(amount);
+        emit FundsWithdrawn(msg.sender, amount);
+    }
+
+    // Allow donors to request a refund if goal is not met by the deadline
+    function requestRefund() public {
+        require(block.timestamp > deadline, "Refunds can only be requested after the deadline.");
+        require(raisedAmount < goal, "Goal has been reached, no refunds.");
+        require(contributions[msg.sender] > 0, "You have not contributed.");
+
+        uint256 amount = contributions[msg.sender];
+        contributions[msg.sender] = 0;  // Reset contribution
+
+        // Mark donor as refunded
+        refunded[msg.sender] = true;
+        payable(msg.sender).transfer(amount);
+
+        emit Refunded(msg.sender, amount);
+    }
+
+    // View current balance of the contract
+    function getContractBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+    // View the total number of donors
+    function getDonorCount() public view returns (uint256) {
+        return owners.length;
+    }
+}
